@@ -1,192 +1,250 @@
-import sqlite3
 from datetime import datetime
 from typing import List
 
-from _sqlite3 import Error
+from sqlalchemy import create_engine,  and_
+from sqlalchemy.orm import sessionmaker
 
-conn = sqlite3.connect("database.db")
-# conn.row_factory = sqlite3.Row
+from models import Service, Base, Account
 
+from telegram import Update
+from telegram.ext import ContextTypes
 
-def dict_factory(cursor, row):
-    d = {}
-    for idx, col in enumerate(cursor.description):
-        d[col[0]] = row[idx]
-    return d
-
-
-conn.row_factory = dict_factory
+engine = create_engine("sqlite:///easy_sharing_bot.db")
+Base.metadata.create_all(engine)
+Session = sessionmaker(engine)
 
 
-def create_database():
-    create_db_sql = """
-            CREATE TABLE IF NOT EXISTS service(
-                chat_id INT,
-                name VARCHAR(100) NOT NULL, 
-                url TEXT NULL,
-                created_by varchar(100) NOT NULL,
-                created_in TIMESTAMP NOT NULL,
-                modified_by VARCHAR(100) NULL, 
-                last_modified TIMESTAMP NULL,
-                PRIMARY KEY (chat_id, name)
-            );
+async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await context.bot.send_message(chat_id=update.effective_chat.id, text="Hi pal! I'm a bot, please talk to me!")
 
-            CREATE TABLE IF NOT EXISTS account(
-                chat_id INT NOT NULL,
-                service_name VARCHAR(100) NOT NULL, 
-                username VARCHAR(100) NOT NULL, 
-                passwd VARCHAR(100) NOT NULL, 
-                created_by VARCHAR(100) NOT NULL, 
-                created_in TIMESTAMP NOT NULL, 
-                modified_by VARCHAR(100) NULL, 
-                last_modified TIMESTAMP NULL,
-                PRIMARY KEY (chat_id, service_name, username),
-                FOREIGN KEY (chat_id) REFERENCES service(chat_id) ON DELETE CASCADE ON UPDATE CASCADE,
-                FOREIGN KEY (service_name) REFERENCES service(name) ON DELETE CASCADE ON UPDATE CASCADE           
-            );
 
-            CREATE TABLE IF NOT EXISTS action(
-                id INT AUTO_INCREMENT,
-                chat_id INT NOT NULL,
-                service_name VARCHAR(100) NOT NULL, 
-                username VARCHAR(100) NOT NULL, 
-                type CHAR(1) NOT NULL, 
-                created_by VARCHAR(100) NOT NULL,
-                created_in TIMESTAMP NOT NULL,
-                PRIMARY KEY (id),
-                FOREIGN KEY (chat_id) REFERENCES account(chat_id) ON DELETE CASCADE ON UPDATE CASCADE,
-                FOREIGN KEY (service_name) REFERENCES account(service_name) ON DELETE CASCADE ON UPDATE CASCADE
-            );
+async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    botname = update.effective_chat._bot.first_name
+    username: str = update.effective_user.username
+    msg = f"""Hi {username}.
+            \nMy name is {botname} and I'm here to help you share accounts/services with friends and team.
+            \nHere is the list of the available commands:
+            \n-------------------------------------------------------
+            \n  /services
+            \n  /status  <service_name>
+            \n  /create_service  <service_name>
+            \n  /update_service  <service_name>  <new_service_name>
+            \n  /delete_service  <service_name>
+            \n  /accounts
+            \n  /create_account  <service_name>  <username>  <password>
+            \n  /update_account  <service_name>  <username>  <new_username>  [new_password]
+            \n  /delete_account  <service_name>  <username>
+            \n  /use  <service_name>  <username>
+            \n  /release  <service_name> [username]
+            \n  /check  <service_name>
+            \n  /report_broken  <service_name>  <username>
+            \n  /ranking  [service_name]"""
+
+    await context.bot.send_message(chat_id=update.effective_chat.id, text=msg)
+
+
+async def status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    text: str = update.effective_message.text
+    chat_id: int = update.effective_chat.id
+    if not _check_args(text, [str]):
+        usage = """Usage: /status <service_name>"""
+        await context.bot.send_message(chat_id=chat_id, text=usage)
+        return
+    args: List[str] = text.split()
+    username: str = update.effective_user.username
+    service_name: str = args[1]
+    _status(chat_id=chat_id, service=service_name)
+    msg = f'Hi {username}!\n'
+    await context.bot.send_message(chat_id=chat_id, text=msg)
+
+
+async def status_me_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    pass
+
+
+async def ranking_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    pass
+
+
+async def services_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id: int = update.effective_chat.id
+    services = _services(chat_id=chat_id)
+    if len(services) <= 0:
+        msg = """No services available.\nCreate a new service using:\n/create_service <service_name>"""
+    else:
+        f_services = "\n  *  ".join([service.name for service in services])
+        msg = f'These are the services available: \n  *  {f_services}'
+    await context.bot.send_message(chat_id=chat_id, text=msg)
+
+
+async def create_service_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    text: str = update.effective_message.text
+    chat_id: int = update.effective_chat.id
+    if not _check_args(text, [str]):
+        usage = "Usage: /create_service <service_name>"
+        await context.bot.send_message(chat_id=chat_id, text=usage)
+        return
+
+    args: List[str] = text.split()
+    service_name: str = args[1]
+    username: str = update.effective_user.username
+    _create_service(chat_id=chat_id, service=service_name, username=username)
+    msg = f"""Service {service_name} created successfully.
+            \nNow add an account for this service using:\n/create_account {service_name} <username> <password>"""
+    await context.bot.send_message(chat_id=chat_id, text=msg)
+
+
+async def update_service_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    pass
+
+
+async def delete_service_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    pass
+
+
+async def check_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    pass
+
+
+async def accounts_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    text: str = update.effective_message.text
+    chat_id: int = update.effective_chat.id
+    if not _check_args(text, [str]):
+        usage = """Usage: /accounts <service_name>"""
+        await context.bot.send_message(chat_id=chat_id, text=usage)
+        return
+
+    args = text.split()
+    service_name: str = args[1]
+    accounts = _accounts(chat_id=chat_id, service_name=service_name)
+    if len(accounts) <= 0:
+        msg = f"""No accounts available for service {service_name}"""
+    else:
+        f_accounts = "\n  *  ".join([f"{account.get('username')}\t{account.get('passwd')}" for account in accounts])
+        msg = f"""These are the available accounts for service {service_name} \n  *  {f_accounts}"""
+    await context.bot.send_message(chat_id=chat_id, text=msg)
+
+
+async def create_account_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    text: str = update.effective_message.text
+    chat_id: int = update.effective_chat.id
+    if not _check_args(text, [str, str, str]):
+        usage = """Usage: /create_account <service_name> <username> <password>"""
+        await context.bot.send_message(chat_id=chat_id, text=usage)
+        return
+
+    args: List[str] = text.split()
+    service_name: str = args[1]
+    username: str = args[2]
+    password: str = args[3]
+    created_by: str = update.effective_user.username
+    _create_account(chat_id=chat_id, service_name=service_name, username=username, password=password,
+                    created_by=created_by)
+    msg = f"""Account {username} successfully created for service {service_name}
+             \nTo tell everyone that you are using this account, enter the following command:
+             \n  /use {service_name} {username}
+             \n
+             \nWhen you are not using this account anymore, just enter the following command:
+             \n  /release {service_name} {username}
             """
-    try:
-        c = conn.cursor()
-        c.executescript(create_db_sql)
-    except Error as e:
-        print(e)
-        exit(1)
+    await context.bot.send_message(chat_id=chat_id, text=msg)
 
 
-def services(chat_id: int) -> List[dict]:
-    _services = []
-    try:
-        cur = conn.cursor()
-        sql = """SELECT * FROM service WHERE chat_id = :chat_id ORDER BY name"""
-        cur.execute(sql, {'chat_id': chat_id})
-        _services = cur.fetchall()
-    except Error as e:
-        print(e)
-    finally:
-        cur.close()
-    return _services
-
-
-# create_service command
-def create_service(chat_id: int, service: str, username: str) -> None:
-    try:
-        cur = conn.cursor()
-        service = {'chat_id': chat_id,
-                   'name': service,
-                   'created_by': username,
-                   'created_in': datetime.now()}
-        sql = """INSERT INTO  service ('chat_id', 'name', 'created_by', 'created_in') 
-                 VALUES (:chat_id, :name, :created_by, :created_in)"""
-        cur.execute(sql, service)
-        conn.commit()
-    finally:
-        cur.close()
-
-
-# update_service command
-def update_service(chat_id: int, service: str) -> None:
+async def update_account_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     pass
 
 
-# delete_service command
-def delete_service(chat_id: int, service: str) -> None:
+async def delete_account_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     pass
 
 
-def accounts(chat_id: int, service_name: str) -> List[dict]:
-    _accounts = []
-    try:
-        cur = conn.cursor()
-        account = {
-            'chat_id': chat_id,
-            'service_name': service_name
-        }
-        sql = """SELECT * FROM account WHERE chat_id = :chat_id AND service_name = :service_name ORDER BY username"""
-        cur.execute(sql, account)
-        _accounts = cur.fetchall()
-    except Exception as e:
-        print(e)
-    finally:
-        cur.close()
-    return _accounts
-
-
-# create_account command
-def create_account(chat_id: int, service: str, username: str, password: str, created_by: str) -> None:
-    try:
-        cur = conn.cursor()
-        account = {'chat_id': chat_id,
-                   'service_name': service,
-                   'username': username,
-                   'password': password,
-                   'created_by': created_by,
-                   'created_in': datetime.now()
-                   }
-        sql = """INSERT INTO account ('chat_id', 'service_name', 'username', 'passwd', 'created_by', 'created_in') 
-                 VALUES (:chat_id, :service_name, :username, :password, :created_by, :created_in)"""
-        cur.execute(sql, account)
-        conn.commit()
-    except Error as e:
-        print(e)
-    finally:
-        cur.close()
-
-
-# update_account command
-def update_account(chat_id: int, service: str, username: str, password: str) -> None:
+async def report_broken_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     pass
 
 
-# delete_account command
-def delete_account(chat_id: int, service: str, username: str, password: str) -> None:
+# actions handlers
+async def use_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     pass
 
 
-
-
-# status command
-def status(chat_id: int, service: str) -> None:
+async def release_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     pass
 
 
-# status_me command
-def status_me(chat_id: int, ) -> None:
+def _services(chat_id: int) -> List[Service]:
+    with Session() as session:
+        return Service.find_by_chat(session=session, chat_id=chat_id)
+
+
+def _create_service(chat_id: int, service: str, username: str) -> None:
+    with Session() as session:
+        service = Service(chat_id=chat_id, name=service, created_by=username, created_at=datetime.now())
+        session.add(service)
+        session.commit()
+
+
+def _update_service(chat_id: int, service: str) -> None:
     pass
 
 
-# ranking command
-def ranking(chat_id: int, service: str) -> None:
+def _delete_service(chat_id: int, service: str) -> None:
+    with Session() as session:
+        service = session.query(chat_id=chat_id, name=service).one_or_none()
+        if service:
+            session.delete(service)
+            session.commit()
+
+
+def _accounts(chat_id: int, service_name: str) -> List[Account]:
+    with Session() as session:
+        return session.query(Account).join("service").filter(and_(chat_id=chat_id, service__name=service_name))
+
+
+def _create_account(chat_id: int, service_name: str, username: str, password: str, created_by: str) -> None:
+    with Session() as session:
+        service = session.query(Service).filter_by(chat_id=chat_id, name=service_name).one_or_none()
+        if service:
+            account = Account(service=service, username=username, password=password, created_by=created_by,
+                              created_at=datetime.now())
+            session.add(account)
+            session.commit()
+
+
+def _update_account(chat_id: int, service: str, username: str, password: str) -> None:
     pass
 
 
-# use command
-def use(chat_id: int, service: str, account: str) -> None:
+def _delete_account(chat_id: int, service: str, username: str, password: str) -> None:
     pass
 
 
-# release command
-def release(chat_id: int, service: str, account: str) -> None:
+def _status(chat_id: int, service: str) -> None:
     pass
 
 
-# check command
-def check(chat_id: int, service: str) -> None:
+def _status_me(chat_id: int, ) -> None:
     pass
 
 
-# report_broken command
-def report_broken(chat_id: int, service: str, account: str) -> None:
+def _ranking(chat_id: int, service: str) -> None:
     pass
+
+
+def _use(chat_id: int, service: str, account: str) -> None:
+    pass
+
+
+def _release(chat_id: int, service: str, account: str) -> None:
+    pass
+
+
+def _check(chat_id: int, service: str) -> None:
+    pass
+
+
+def _report_broken(chat_id: int, service: str, account: str) -> None:
+    pass
+
+
+def _check_args(args: str, expected_args: list) -> bool:
+    return (len(args.split()) - 1) == len(expected_args)  # TODO: add typing check here

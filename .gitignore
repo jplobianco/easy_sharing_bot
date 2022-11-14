@@ -1,4 +1,4 @@
 .idea/
 .env
-database.db
+easy_sharing_bot.db
 __pycache__/
