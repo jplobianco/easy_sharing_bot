@@ -1,6 +1,8 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, DateTime
+from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, Enum
 from sqlalchemy.orm import relationship, backref
 from sqlalchemy.ext.declarative import declarative_base
+import enum
+
 
 Base = declarative_base()
 
@@ -47,18 +49,29 @@ class Account(Base):
     usages = relationship("Usage", backref=backref("account"))
 
     def __repr__(self):
-        return f'Account {self.username}'
+        return f'Account {self.username}  {self.password}  ({self.available_display})'
+
+    @property
+    def available_display(self):
+        if self.grabbed_at is None or self.released_at is not None:
+            return 'Available'
+        return f'Unavailable [being used by @{self.grabbed_by}]'
 
     @classmethod
     def find_by_service_id(cls, session, service_id: int):
         return session.query(cls).filter_by(service_id=service_id).all()
 
 
+class UsageChoices(enum.Enum):
+    using = 'using'
+    releasing = 'releasing'
+
+
 class Usage(Base):
     __tablename__ = "usage"
-    action_id = Column(Integer, primary_key=True)
+    usage_id = Column(Integer, primary_key=True)
     account_id = Column(Integer, ForeignKey("account.account_id"))
-    type = Column(String, nullable=False)  # Using | Releasing
+    type = Column(Enum(UsageChoices), nullable=False)
     created_by = Column(String, nullable=False)
     created_at = Column(DateTime, nullable=False)
 
