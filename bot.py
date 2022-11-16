@@ -1,4 +1,5 @@
 from datetime import datetime
+from functools import wraps
 from typing import List
 
 from sqlalchemy import create_engine, and_, or_
@@ -18,14 +19,14 @@ from telegram.ext import ApplicationBuilder, CommandHandler
 
 load_dotenv()
 
-API_KEY = os.getenv('API_KEY')
+BOT_TOKEN = os.getenv('BOT_TOKEN')
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 
-engine = create_engine("sqlite:///easy_sharing_bot.db")
+engine = create_engine("sqlite:///bot.db")
 Base.metadata.create_all(engine)
 Session = sessionmaker(engine)
 
@@ -70,12 +71,13 @@ async def status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     args: List[str] = text.split()
     service_name: str = args[1]
     accounts_list: List[Account] = _accounts(chat_id=chat_id, service=service_name)
-    msg = ["This is the list of accounts for service {service_name}."]
+    msg = [f"This is the list of accounts for service {service_name}."]
     for account in accounts_list:
         msg.append(f"\n  *  {account}")
     await context.bot.send_message(chat_id=chat_id, text="".join(msg))
 
 
+# @only_admin_or_creator
 async def status_me_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id: int = update.effective_message.chat_id
     current_user: str = update.effective_user.username
@@ -89,6 +91,7 @@ async def status_me_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                                .filter(Service.chat_id == chat_id)
                                .filter(Account.grabbed_by == current_user)
                                .filter(Account.released_at.is_(None))
+                               .order_by(Service.name)
                                .order_by(Account.username)
                                .all())
 
@@ -125,6 +128,11 @@ async def create_service_handler(update: Update, context: ContextTypes.DEFAULT_T
         await context.bot.send_message(chat_id=chat_id, text=usage)
         return
 
+    chat_member = await context.bot.get_chat_member(chat_id=chat_id, user_id=update.effective_user.id)
+    if chat_member.status not in ["admin", "creator"]:
+        await context.bot.send_message(chat_id=chat_id, text="This command is only available for admins.")
+        return
+
     args: List[str] = text.split()
     service_name: str = args[1]
     username: str = update.effective_user.username
@@ -140,6 +148,11 @@ async def update_service_handler(update: Update, context: ContextTypes.DEFAULT_T
     if not _check_args(text, [str, str]):
         usage = "Usage: /update_service <service_name> <new_service_name>"
         await context.bot.send_message(chat_id=chat_id, text=usage)
+        return
+
+    chat_member = await context.bot.get_chat_member(chat_id=chat_id, user_id=update.effective_user.id)
+    if chat_member.status not in ["admin", "creator"]:
+        await context.bot.send_message(chat_id=chat_id, text="This command is only available for admins.")
         return
 
     args = text.split()
@@ -160,6 +173,11 @@ async def delete_service_handler(update: Update, context: ContextTypes.DEFAULT_T
         await context.bot.send_message(chat_id=chat_id, text=usage)
         return
 
+    chat_member = await context.bot.get_chat_member(chat_id=chat_id, user_id=update.effective_user.id)
+    if chat_member.status not in ["admin", "creator"]:
+        await context.bot.send_message(chat_id=chat_id, text="This command is only available for admins.")
+        return
+
     args: List[str] = text.split()
     service_name = args[1]
     if _delete_service(chat_id=chat_id, service=service_name):
@@ -171,7 +189,35 @@ async def delete_service_handler(update: Update, context: ContextTypes.DEFAULT_T
 
 
 async def check_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    pass
+    text: str = update.effective_message.text
+    chat_id: str = update.effective_message.chat_id
+    if not _check_args(text, [str]):
+        usage = "Usage: /check <service_name>"
+        await context.bot.send_message(chat_id=chat_id, text=usage)
+        return
+
+    args = text.split()
+    service_name = args[1]
+
+    msg = "Service not found"
+    with Session() as session:
+        using_accounts = (session
+                          .query(Account)
+                          .join(Service)
+                          .filter(Account.service_id == Service.service_id)
+                          .filter(Service.name == service_name)
+                          .filter(Account.grabbed_at.is_not(None))
+                          .filter(Account.released_at.is_(None))
+                          .all())
+
+        if len(using_accounts) > 0:
+            msg = [f"Hi there. Are you still using the following account(s) for service {service_name}?\n"]
+            for account in using_accounts:
+                msg.append(f"\nUsername: {account.username}  (@{account.grabbed_by})")
+            msg = "".join(msg)
+        else:
+            msg = "Service not found or no accounts for this service or all accounts are available to be used"
+    await context.bot.send_message(chat_id=chat_id, text=msg)
 
 
 async def accounts_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -184,7 +230,7 @@ async def accounts_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     args = text.split()
     service_name: str = args[1]
-    accounts = _accounts(chat_id=chat_id, service_name=service_name)
+    accounts = _accounts(chat_id=chat_id, service=service_name)
     if len(accounts) <= 0:
         msg = f"""No accounts available for service {service_name}"""
     else:
@@ -199,6 +245,11 @@ async def create_account_handler(update: Update, context: ContextTypes.DEFAULT_T
     if not _check_args(text, [str, str, str]):
         usage = """Usage: /create_account <service_name> <username> <password>"""
         await context.bot.send_message(chat_id=chat_id, text=usage)
+        return
+
+    chat_member = await context.bot.get_chat_member(chat_id=chat_id, user_id=update.effective_user.id)
+    if chat_member.status not in ["admin", "creator"]:
+        await context.bot.send_message(chat_id=chat_id, text="This command is only available for admins.")
         return
 
     args: List[str] = text.split()
@@ -225,6 +276,11 @@ async def update_account_handler(update: Update, context: ContextTypes.DEFAULT_T
         usage = "Usage: /update_account [service_name] [username] [new_password]"
         await context.bot.send_message(chat_id=chat_id, text=usage)
 
+    chat_member = await context.bot.get_chat_member(chat_id=chat_id, user_id=update.effective_user.id)
+    if chat_member.status not in ["admin", "creator"]:
+        await context.bot.send_message(chat_id=chat_id, text="This command is only available for admins.")
+        return
+
     args = text.split()
     service_name = args[1]
     username = args[2]
@@ -243,6 +299,11 @@ async def delete_account_handler(update: Update, context: ContextTypes.DEFAULT_T
     if not _check_args(text, [str, str]):
         usage = "Usage: /delete_account <service_name> <username>"
         await context.bot.send_message(chat_id=chat_id, text=usage)
+        return
+
+    chat_member = await context.bot.get_chat_member(chat_id=chat_id, user_id=update.effective_user.id)
+    if chat_member.status not in ["admin", "creator"]:
+        await context.bot.send_message(chat_id=chat_id, text="This command is only available for admins.")
         return
 
     args: List[str] = text.split()
@@ -273,7 +334,7 @@ async def use_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     username = args[2]
     current_user = update.effective_user.username
     if _use(chat_id=chat_id, service=service_name, username=username, current_user=current_user):
-        msg = f"You are new using service {service_name} with account {username}"
+        msg = f"You are now using service {service_name} with account {username}"
     else:
         msg = f"Account not found or the account is already being used"
     await context.bot.send_message(chat_id=chat_id, text=msg)
@@ -387,10 +448,6 @@ def _delete_account(chat_id: int, service: str, username: str) -> None:
     return result
 
 
-def _status_me(chat_id: int, ) -> None:
-    pass
-
-
 def _ranking(chat_id: int, service: str) -> None:
     pass
 
@@ -409,13 +466,12 @@ def _use(chat_id: int, service: str, username: str, current_user: str) -> None:
                              ).one_or_none()
         if available_account:
             available_account.grabbed_at = datetime.now()
-            available_account.release_at = None
+            available_account.released_at = None
             available_account.grabbed_by = current_user
 
             usage = Usage(account_id=available_account.account_id,
-                          type=UsageChoices.using,
-                          created_by=current_user,
-                          created_at=datetime.now())
+                          performed_by=current_user,
+                          started_at=datetime.now())
             session.add(usage)
             session.commit()
             result = True
@@ -425,24 +481,33 @@ def _use(chat_id: int, service: str, username: str, current_user: str) -> None:
 def _release(chat_id: int, service: str, username: str, current_user: str) -> None:
     result = False
     with Session() as session:
-        account = (session
-                   .query(Account)
-                   .join(Service)
-                   .filter(Account.service_id == Service.service_id)
-                   .filter(Service.chat_id == chat_id)
-                   .filter(Service.name == service)
-                   .filter(Account.username == username)
-                   .filter(Account.grabbed_by == current_user)
-                   .filter(Account.released_at.is_(None)).one_or_none())
-        if account:
-            account.released_at = datetime.now()
-            session.commit()
-            result = True
+        try:
+            account = (session
+                       .query(Account)
+                       .join(Service)
+                       .filter(Account.service_id == Service.service_id)
+                       .filter(Service.chat_id == chat_id)
+                       .filter(Service.name == service)
+                       .filter(Account.username == username)
+                       .filter(Account.grabbed_by == current_user)
+                       .filter(Account.released_at.is_(None)).one_or_none())
+            if account:
+                account.released_at = datetime.now()
+                usages = (session
+                          .query(Usage)
+                          .filter(Usage.account_id == account.account_id)
+                          .filter(Usage.performed_by == current_user)
+                          .filter(Usage.finished_at.is_(None))
+                          .all())
+                now = datetime.now()
+                for usage in usages:
+                    usage.finished_at = now
+                session.commit()
+                result = True
+        except Exception as e:
+            session.rollback()
+            print(e)
     return result
-
-
-def _check(chat_id: int, service: str) -> None:
-    pass
 
 
 def _report_broken(chat_id: int, service: str, account: str) -> None:
@@ -454,7 +519,7 @@ def _check_args(args: str, expected_args: list) -> bool:
 
 
 if __name__ == '__main__':
-    application = ApplicationBuilder().token(API_KEY).build()
+    application = ApplicationBuilder().token(BOT_TOKEN).build()
 
     # create generic handlers
     start_handler = CommandHandler('start', start_handler)

@@ -71,9 +71,9 @@ class Usage(Base):
     __tablename__ = "usage"
     usage_id = Column(Integer, primary_key=True)
     account_id = Column(Integer, ForeignKey("account.account_id"))
-    type = Column(Enum(UsageChoices), nullable=False)
-    created_by = Column(String, nullable=False)
-    created_at = Column(DateTime, nullable=False)
+    performed_by = Column(String, nullable=False)
+    started_at = Column(DateTime, nullable=False)
+    finished_at = Column(DateTime, nullable=True)
 
     def __repr__(self):
         return f'{self.created_by} {self.type} {self.account.username} since {self.created_at}'
