@@ -30,6 +30,8 @@ engine = create_engine("sqlite:///bot.db")
 Base.metadata.create_all(engine)
 Session = sessionmaker(engine)
 
+PERMISSION_DENIED_MESSAGE = "This command is only available for admins."
+
 
 async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(chat_id=update.effective_chat.id, text="Hi pal! I'm a bot, please talk to me!")
@@ -107,6 +109,7 @@ async def status_me_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 
 async def ranking_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    # TODO: implement in the future
     pass
 
 
@@ -122,6 +125,7 @@ async def services_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 msg = f'These are the services available: \n  *  {f_services}'
             await context.bot.send_message(chat_id=chat_id, text=msg)
     except SQLAlchemyError as err:
+        print(err.message)
         await context.bot.send_message(chat_id=chat_id, text="An error occurred while retrieving services")
 
 
@@ -134,7 +138,7 @@ async def create_service_handler(update: Update, context: ContextTypes.DEFAULT_T
         return
 
     if not _is_admin_or_creator(update, context):
-        await context.bot.send_message(chat_id=chat_id, text="This command is only available for admins.")
+        await context.bot.send_message(chat_id=chat_id, text=PERMISSION_DENIED_MESSAGE)
         return
 
     args: List[str] = text.split()
@@ -155,7 +159,7 @@ async def update_service_handler(update: Update, context: ContextTypes.DEFAULT_T
         return
 
     if not _is_admin_or_creator(update, context):
-        await context.bot.send_message(chat_id=chat_id, text="This command is only available for admins.")
+        await context.bot.send_message(chat_id=chat_id, text=PERMISSION_DENIED_MESSAGE)
         return
 
     args = text.split()
@@ -177,7 +181,7 @@ async def delete_service_handler(update: Update, context: ContextTypes.DEFAULT_T
         return
 
     if not _is_admin_or_creator(update, context):
-        await context.bot.send_message(chat_id=chat_id, text="This command is only available for admins.")
+        await context.bot.send_message(chat_id=chat_id, text=PERMISSION_DENIED_MESSAGE)
         return
 
     args: List[str] = text.split()
@@ -251,7 +255,7 @@ async def create_account_handler(update: Update, context: ContextTypes.DEFAULT_T
         return
 
     if not _is_admin_or_creator(update, context):
-        await context.bot.send_message(chat_id=chat_id, text="This command is only available for admins.")
+        await context.bot.send_message(chat_id=chat_id, text=PERMISSION_DENIED_MESSAGE)
         return
 
     args: List[str] = text.split()
@@ -279,7 +283,7 @@ async def update_account_handler(update: Update, context: ContextTypes.DEFAULT_T
         await context.bot.send_message(chat_id=chat_id, text=usage)
 
     if not _is_admin_or_creator(update, context):
-        await context.bot.send_message(chat_id=chat_id, text="This command is only available for admins.")
+        await context.bot.send_message(chat_id=chat_id, text=PERMISSION_DENIED_MESSAGE)
         return
 
     args = text.split()
@@ -303,7 +307,7 @@ async def delete_account_handler(update: Update, context: ContextTypes.DEFAULT_T
         return
 
     if not _is_admin_or_creator(update, context):
-        await context.bot.send_message(chat_id=chat_id, text="This command is only available for admins.")
+        await context.bot.send_message(chat_id=chat_id, text=PERMISSION_DENIED_MESSAGE)
         return
 
     args: List[str] = text.split()
@@ -366,7 +370,7 @@ def _create_service(chat_id: int, service: str, username: str) -> None:
         session.commit()
 
 
-def _update_service(chat_id: int, service: str, new_service: str) -> None:
+def _update_service(chat_id: int, service: str, new_service: str) -> bool:
     result = False
     with Session() as session:
         service = session.query(Service).filter(Service.name == service).filter(Service.chat_id == chat_id).one_or_none()
@@ -377,7 +381,7 @@ def _update_service(chat_id: int, service: str, new_service: str) -> None:
     return result
 
 
-def _delete_service(chat_id: int, service: str) -> None:
+def _delete_service(chat_id: int, service: str) -> bool:
     result = False
     with Session() as session:
         service = session.query(Service).filter(Service.chat_id == chat_id, Service.name == service).one_or_none()
@@ -398,7 +402,7 @@ def _create_account(chat_id: int, service_name: str, username: str, password: st
             session.commit()
 
 
-def _update_account(chat_id: int, service: str, username: str, new_password: str) -> None:
+def _update_account(chat_id: int, service: str, username: str, new_password: str) -> bool:
     result = False
     with Session() as session:
         account = (session.query(Account)
@@ -415,7 +419,7 @@ def _update_account(chat_id: int, service: str, username: str, new_password: str
     return result
 
 
-def _delete_account(chat_id: int, service: str, username: str) -> None:
+def _delete_account(chat_id: int, service: str, username: str) -> bool:
     result = False
     with Session() as session:
         account = (session.query(Account).join(Service)
@@ -430,11 +434,7 @@ def _delete_account(chat_id: int, service: str, username: str) -> None:
     return result
 
 
-def _ranking(chat_id: int, service: str) -> None:
-    pass
-
-
-def _use(chat_id: int, service: str, username: str, current_user: str) -> None:
+def _use(chat_id: int, service: str, username: str, current_user: str) -> bool:
     result = False
     with Session() as session:
         available_account = (session
@@ -460,7 +460,7 @@ def _use(chat_id: int, service: str, username: str, current_user: str) -> None:
     return result
 
 
-def _release(chat_id: int, service: str, username: str, current_user: str) -> None:
+def _release(chat_id: int, service: str, username: str, current_user: str) -> bool:
     result = False
     with Session() as session:
         try:
@@ -490,10 +490,6 @@ def _release(chat_id: int, service: str, username: str, current_user: str) -> No
             session.rollback()
             print(e)
     return result
-
-
-def _report_broken(chat_id: int, service: str, account: str) -> None:
-    pass
 
 
 def _check_args(args: str, expected_args: list) -> bool:
