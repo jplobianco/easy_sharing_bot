@@ -1,3 +1,5 @@
+from typing import List
+
 from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, Enum
 from sqlalchemy.orm import relationship, backref
 from sqlalchemy.ext.declarative import declarative_base
@@ -23,11 +25,11 @@ class Service(Base):
         return f'Service {self.name}'
 
     @classmethod
-    def find_by_name(cls, session, chat_id: int, name: str):
+    def find_by__name(cls, session, chat_id: int, name: str):
         return session.query(cls).filter_by(chat_id=chat_id, name=name).all()
 
     @classmethod
-    def find_by_chat(cls, session, chat_id: int):
+    def find_by__chat_id(cls, session, chat_id: int):
         return session.query(cls).filter_by(chat_id=chat_id).order_by('name').all()
 
 
@@ -58,8 +60,18 @@ class Account(Base):
         return f'Unavailable [being used by @{self.grabbed_by}]'
 
     @classmethod
-    def find_by_service_id(cls, session, service_id: int):
+    def find_by__service_id(cls, session, service_id: int) -> List:
         return session.query(cls).filter_by(service_id=service_id).all()
+
+    @classmethod
+    def find_by__chat_id__and__service_name(cls, session, chat_id: int, service: str) -> List:
+        return (session.query(cls)
+                .join(Service)
+                .filter(cls.service_id == Service.service_id)
+                .filter(Service.chat_id == chat_id)
+                .filter(Service.name == service)
+                .order_by(cls.username)
+                .all())
 
 
 class UsageChoices(enum.Enum):

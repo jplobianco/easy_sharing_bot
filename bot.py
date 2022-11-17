@@ -1,13 +1,13 @@
 from datetime import datetime
-from functools import wraps
 from typing import List
 
-from sqlalchemy import create_engine, and_, or_
+from sqlalchemy import create_engine, or_
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import sessionmaker, selectinload
 
-from models import Service, Base, Account, Usage, UsageChoices
+from models import Service, Base, Account, Usage
 
-from telegram import Update, MenuButton
+from telegram import Update
 from telegram.ext import ContextTypes
 
 import os
@@ -70,14 +70,15 @@ async def status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
     args: List[str] = text.split()
     service_name: str = args[1]
-    accounts_list: List[Account] = _accounts(chat_id=chat_id, service=service_name)
+    with Session() as session:
+        accounts_list: List[Account] = Account.find_by__chat_id__and__service_name(session=session, chat_id=chat_id,
+                                                                               service=service_name)
     msg = [f"This is the list of accounts for service {service_name}."]
     for account in accounts_list:
         msg.append(f"\n  *  {account}")
     await context.bot.send_message(chat_id=chat_id, text="".join(msg))
 
 
-# @only_admin_or_creator
 async def status_me_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id: int = update.effective_message.chat_id
     current_user: str = update.effective_user.username
@@ -111,13 +112,17 @@ async def ranking_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 async def services_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id: int = update.effective_chat.id
-    services = _services(chat_id=chat_id)
-    if len(services) <= 0:
-        msg = """No services available.\nCreate a new service using:\n/create_service <service_name>"""
-    else:
-        f_services = "\n  *  ".join([service.name for service in services])
-        msg = f'These are the services available: \n  *  {f_services}'
-    await context.bot.send_message(chat_id=chat_id, text=msg)
+    try:
+        with Session() as session:
+            services = Service.find_by__chat_id(session=session, chat_id=chat_id)
+            if len(services) <= 0:
+                msg = """No services available.\nCreate a new service using:\n/create_service <service_name>"""
+            else:
+                f_services = "\n  *  ".join([service.name for service in services])
+                msg = f'These are the services available: \n  *  {f_services}'
+            await context.bot.send_message(chat_id=chat_id, text=msg)
+    except SQLAlchemyError as err:
+        await context.bot.send_message(chat_id=chat_id, text="An error occurred while retrieving services")
 
 
 async def create_service_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -128,8 +133,7 @@ async def create_service_handler(update: Update, context: ContextTypes.DEFAULT_T
         await context.bot.send_message(chat_id=chat_id, text=usage)
         return
 
-    chat_member = await context.bot.get_chat_member(chat_id=chat_id, user_id=update.effective_user.id)
-    if chat_member.status not in ["admin", "creator"]:
+    if not _is_admin_or_creator(update, context):
         await context.bot.send_message(chat_id=chat_id, text="This command is only available for admins.")
         return
 
@@ -150,8 +154,7 @@ async def update_service_handler(update: Update, context: ContextTypes.DEFAULT_T
         await context.bot.send_message(chat_id=chat_id, text=usage)
         return
 
-    chat_member = await context.bot.get_chat_member(chat_id=chat_id, user_id=update.effective_user.id)
-    if chat_member.status not in ["admin", "creator"]:
+    if not _is_admin_or_creator(update, context):
         await context.bot.send_message(chat_id=chat_id, text="This command is only available for admins.")
         return
 
@@ -173,8 +176,7 @@ async def delete_service_handler(update: Update, context: ContextTypes.DEFAULT_T
         await context.bot.send_message(chat_id=chat_id, text=usage)
         return
 
-    chat_member = await context.bot.get_chat_member(chat_id=chat_id, user_id=update.effective_user.id)
-    if chat_member.status not in ["admin", "creator"]:
+    if not _is_admin_or_creator(update, context):
         await context.bot.send_message(chat_id=chat_id, text="This command is only available for admins.")
         return
 
@@ -230,7 +232,8 @@ async def accounts_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     args = text.split()
     service_name: str = args[1]
-    accounts = _accounts(chat_id=chat_id, service=service_name)
+    with Session() as session:
+        accounts = Account.find_by__chat_id__and__service_name(session=session, chat_id=chat_id, service=service_name)
     if len(accounts) <= 0:
         msg = f"""No accounts available for service {service_name}"""
     else:
@@ -247,8 +250,7 @@ async def create_account_handler(update: Update, context: ContextTypes.DEFAULT_T
         await context.bot.send_message(chat_id=chat_id, text=usage)
         return
 
-    chat_member = await context.bot.get_chat_member(chat_id=chat_id, user_id=update.effective_user.id)
-    if chat_member.status not in ["admin", "creator"]:
+    if not _is_admin_or_creator(update, context):
         await context.bot.send_message(chat_id=chat_id, text="This command is only available for admins.")
         return
 
@@ -276,8 +278,7 @@ async def update_account_handler(update: Update, context: ContextTypes.DEFAULT_T
         usage = "Usage: /update_account [service_name] [username] [new_password]"
         await context.bot.send_message(chat_id=chat_id, text=usage)
 
-    chat_member = await context.bot.get_chat_member(chat_id=chat_id, user_id=update.effective_user.id)
-    if chat_member.status not in ["admin", "creator"]:
+    if not _is_admin_or_creator(update, context):
         await context.bot.send_message(chat_id=chat_id, text="This command is only available for admins.")
         return
 
@@ -301,8 +302,7 @@ async def delete_account_handler(update: Update, context: ContextTypes.DEFAULT_T
         await context.bot.send_message(chat_id=chat_id, text=usage)
         return
 
-    chat_member = await context.bot.get_chat_member(chat_id=chat_id, user_id=update.effective_user.id)
-    if chat_member.status not in ["admin", "creator"]:
+    if not _is_admin_or_creator(update, context):
         await context.bot.send_message(chat_id=chat_id, text="This command is only available for admins.")
         return
 
@@ -359,13 +359,6 @@ async def release_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     await context.bot.send_message(chat_id=chat_id, text=msg)
 
 
-
-
-def _services(chat_id: int) -> List[Service]:
-    with Session() as session:
-        return Service.find_by_chat(session=session, chat_id=chat_id)
-
-
 def _create_service(chat_id: int, service: str, username: str) -> None:
     with Session() as session:
         service = Service(chat_id=chat_id, name=service, created_by=username, created_at=datetime.now())
@@ -393,17 +386,6 @@ def _delete_service(chat_id: int, service: str) -> None:
             session.commit()
             result = True
     return result
-
-
-def _accounts(chat_id: int, service: str) -> List[Account]:
-    with Session() as session:
-        return (session.query(Account)
-                .join(Service)
-                .filter(Account.service_id == Service.service_id)
-                .filter(Service.chat_id == chat_id)
-                .filter(Service.name == service)
-                .order_by(Account.username)
-                .all())
 
 
 def _create_account(chat_id: int, service_name: str, username: str, password: str, created_by: str) -> None:
@@ -516,6 +498,11 @@ def _report_broken(chat_id: int, service: str, account: str) -> None:
 
 def _check_args(args: str, expected_args: list) -> bool:
     return (len(args.split()) - 1) == len(expected_args)  # TODO: add typing check here
+
+
+async def _is_admin_or_creator(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    chat_member = await context.bot.get_chat_member(chat_id=update.effective_chat.id, user_id=update.effective_user.id)
+    return chat_member.status in ["admin", "creator"]
 
 
 if __name__ == '__main__':
