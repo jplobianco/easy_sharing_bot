@@ -2,6 +2,7 @@ from datetime import datetime
 from typing import List
 
 from sqlalchemy import create_engine, or_
+from sqlalchemy.sql import text as text_sa
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import sessionmaker, selectinload
 
@@ -30,7 +31,25 @@ engine = create_engine("sqlite:///bot.db")
 Base.metadata.create_all(engine)
 Session = sessionmaker(engine)
 
-PERMISSION_DENIED_MESSAGE = "This command is only available for admins."
+_PERMISSION_DENIED_MESSAGE = "This command is only available for admins."
+
+
+
+from functools import wraps
+
+LIST_OF_ADMINS = [12345678, 87654321] # List of user_id of authorized users
+
+
+def only_admins_or_creators(func):
+    @wraps(func)
+    async def wrapped(update, context, *args, **kwargs):
+        # user_id = update.effective_user.id #if user_id not in LIST_OF_ADMINS:
+        if not _is_admin_or_creator(update, context):
+            # print("Unauthorized access denied for {}.".format(user_id))
+            await context.bot.send_message(chat_id=update.effective_chat.id, text="Only admins can use this command.")
+            return
+        return await func(update, context, *args, **kwargs)
+    return wrapped
 
 
 async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -38,10 +57,8 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    botname = update.effective_chat._bot.first_name
-    username: str = update.effective_user.username
-    msg = f"""Hi {username}.
-            \nMy name is {botname} and I'm here to help you share accounts/services with friends and team.
+    msg = f"""Hi {update.effective_user.username}.
+            \nMy name is {context.bot.first_name} and I'm here to help you share accounts/services with your friends.
             \nHere is the list of the available commands:
             \n-------------------------------------------------------
             \n  /services
@@ -74,7 +91,7 @@ async def status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     service_name: str = args[1]
     with Session() as session:
         accounts_list: List[Account] = Account.find_by__chat_id__and__service_name(session=session, chat_id=chat_id,
-                                                                               service=service_name)
+                                                                                   service=service_name)
     msg = [f"This is the list of accounts for service {service_name}."]
     for account in accounts_list:
         msg.append(f"\n  *  {account}")
@@ -84,7 +101,6 @@ async def status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 async def status_me_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id: int = update.effective_message.chat_id
     current_user: str = update.effective_user.username
-    accounts_used_by_me: List[Account] = []
     with Session() as session:
         accounts_used_by_me = (session
                                .query(Account)
@@ -101,7 +117,8 @@ async def status_me_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if len(accounts_used_by_me) > 0:
         msg = [f"You are currently using {len(accounts_used_by_me)} account(s):"]
         for account in accounts_used_by_me:
-            msg.append(f"\nService: {account.service.name}; Username: {account.grabbed_by}; Password: {account.password};")
+            msg.append(
+                f"\nService: {account.service.name}; Username: {account.grabbed_by}; Password: {account.password};")
         msg = "".join(msg)
     else:
         msg = "You are not using any account currently."
@@ -109,8 +126,37 @@ async def status_me_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 
 async def ranking_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # TODO: implement in the future
-    pass
+    text: str = update.effective_message.text
+    chat_id: int = update.effective_chat.id
+    if not _check_args(text, [str]):
+        usage = "Usage: /ranking <service_name>"
+        await context.bot.send_message(chat_id=chat_id, text=usage)
+        return
+
+    args = text.split()
+    service_name = args[1]
+
+    with Session() as session:
+        try:
+            ranking_sql = text_sa("""SELECT Usage.performed_by, SUM(ROUND((JULIANDAY(CASE WHEN Usage.finished_at IS NULL THEN CURRENT_TIMESTAMP ELSE Usage.finished_at END) - JULIANDAY(Usage.started_at)) * 86400)) AS duration
+                                                      FROM Usage, Account, Service
+                                                      WHERE Usage.account_id = Account.account_id
+                                                      AND Account.service_id = Service.service_id
+                                                      AND Service.name = :service_name
+                                                      GROUP BY Usage.performed_by""")
+            ranking = session.execute(ranking_sql, {"service_name": service_name}).fetchall()
+            if len(ranking) > 0:
+                msg = [f"Usage ranking for {service_name}:\n----------------------------------------------"]
+                for r in ranking:
+                    msg.append(f"\n{r[0]}\t\t | {r[1]}s")
+                msg = "".join(msg)
+            else:
+                msg = f"There is no usage for service {service_name}."
+            await context.bot.send_message(chat_id=chat_id, text=msg)
+
+        except SQLAlchemyError as e:
+            await context.bot.send_message(chat_id=chat_id, text="Sorry, some error occurred.")
+            raise e
 
 
 async def services_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -125,20 +171,17 @@ async def services_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 msg = f'These are the services available: \n  *  {f_services}'
             await context.bot.send_message(chat_id=chat_id, text=msg)
     except SQLAlchemyError as err:
-        print(err.message)
+        print(f'{err}')
         await context.bot.send_message(chat_id=chat_id, text="An error occurred while retrieving services")
 
 
+@only_admins_or_creators
 async def create_service_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text: str = update.effective_message.text
     chat_id: int = update.effective_chat.id
     if not _check_args(text, [str]):
         usage = "Usage: /create_service <service_name>"
         await context.bot.send_message(chat_id=chat_id, text=usage)
-        return
-
-    if not _is_admin_or_creator(update, context):
-        await context.bot.send_message(chat_id=chat_id, text=PERMISSION_DENIED_MESSAGE)
         return
 
     args: List[str] = text.split()
@@ -150,16 +193,13 @@ async def create_service_handler(update: Update, context: ContextTypes.DEFAULT_T
     await context.bot.send_message(chat_id=chat_id, text=msg)
 
 
+@only_admins_or_creators
 async def update_service_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text: str = update.effective_message.text
     chat_id: int = update.effective_message.chat_id
     if not _check_args(text, [str, str]):
         usage = "Usage: /update_service <service_name> <new_service_name>"
         await context.bot.send_message(chat_id=chat_id, text=usage)
-        return
-
-    if not _is_admin_or_creator(update, context):
-        await context.bot.send_message(chat_id=chat_id, text=PERMISSION_DENIED_MESSAGE)
         return
 
     args = text.split()
@@ -172,6 +212,7 @@ async def update_service_handler(update: Update, context: ContextTypes.DEFAULT_T
     await context.bot.send_message(chat_id=chat_id, text=msg)
 
 
+@only_admins_or_creators
 async def delete_service_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text: str = update.effective_message.text
     chat_id: int = update.effective_message.chat_id
@@ -180,9 +221,6 @@ async def delete_service_handler(update: Update, context: ContextTypes.DEFAULT_T
         await context.bot.send_message(chat_id=chat_id, text=usage)
         return
 
-    if not _is_admin_or_creator(update, context):
-        await context.bot.send_message(chat_id=chat_id, text=PERMISSION_DENIED_MESSAGE)
-        return
 
     args: List[str] = text.split()
     service_name = args[1]
@@ -193,10 +231,9 @@ async def delete_service_handler(update: Update, context: ContextTypes.DEFAULT_T
     await context.bot.send_message(chat_id=chat_id, text=msg)
 
 
-
 async def check_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text: str = update.effective_message.text
-    chat_id: str = update.effective_message.chat_id
+    chat_id: int = update.effective_message.chat_id
     if not _check_args(text, [str]):
         usage = "Usage: /check <service_name>"
         await context.bot.send_message(chat_id=chat_id, text=usage)
@@ -204,8 +241,6 @@ async def check_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     args = text.split()
     service_name = args[1]
-
-    msg = "Service not found"
     with Session() as session:
         using_accounts = (session
                           .query(Account)
@@ -222,7 +257,7 @@ async def check_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 msg.append(f"\nUsername: {account.username}  (@{account.grabbed_by})")
             msg = "".join(msg)
         else:
-            msg = "Service not found or no accounts for this service or all accounts are available to be used"
+            msg = "Service not found or no account is being used now"
     await context.bot.send_message(chat_id=chat_id, text=msg)
 
 
@@ -246,16 +281,13 @@ async def accounts_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     await context.bot.send_message(chat_id=chat_id, text=msg)
 
 
+@only_admins_or_creators
 async def create_account_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text: str = update.effective_message.text
     chat_id: int = update.effective_chat.id
     if not _check_args(text, [str, str, str]):
         usage = """Usage: /create_account <service_name> <username> <password>"""
         await context.bot.send_message(chat_id=chat_id, text=usage)
-        return
-
-    if not _is_admin_or_creator(update, context):
-        await context.bot.send_message(chat_id=chat_id, text=PERMISSION_DENIED_MESSAGE)
         return
 
     args: List[str] = text.split()
@@ -275,16 +307,13 @@ async def create_account_handler(update: Update, context: ContextTypes.DEFAULT_T
     await context.bot.send_message(chat_id=chat_id, text=msg)
 
 
+@only_admins_or_creators
 async def update_account_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text: str = update.effective_message.text
     chat_id: int = update.effective_message.chat_id
     if not _check_args(text, [str, str, str]):
         usage = "Usage: /update_account [service_name] [username] [new_password]"
         await context.bot.send_message(chat_id=chat_id, text=usage)
-
-    if not _is_admin_or_creator(update, context):
-        await context.bot.send_message(chat_id=chat_id, text=PERMISSION_DENIED_MESSAGE)
-        return
 
     args = text.split()
     service_name = args[1]
@@ -298,16 +327,13 @@ async def update_account_handler(update: Update, context: ContextTypes.DEFAULT_T
     await context.bot.send_message(chat_id=chat_id, text=msg)
 
 
+@only_admins_or_creators
 async def delete_account_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text: str = update.effective_message.text
     chat_id: int = update.effective_message.chat_id
     if not _check_args(text, [str, str]):
         usage = "Usage: /delete_account <service_name> <username>"
         await context.bot.send_message(chat_id=chat_id, text=usage)
-        return
-
-    if not _is_admin_or_creator(update, context):
-        await context.bot.send_message(chat_id=chat_id, text=PERMISSION_DENIED_MESSAGE)
         return
 
     args: List[str] = text.split()
@@ -321,7 +347,21 @@ async def delete_account_handler(update: Update, context: ContextTypes.DEFAULT_T
 
 
 async def report_broken_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    pass
+    text: str = update.effective_message.text
+    chat_id: int = update.effective_chat.id
+    if not _check_args(text, [str, str]):
+        usage = "Usage: /report_broken <service_name> <username>"
+        await context.bot.send_message(chat_id=chat_id, text=usage)
+        return
+
+    args = text.split()
+    service_name = args[1]
+    username = args[2]
+    reporter = update.effective_user.username
+    admins = await context.bot.get_chat_administrators(chat_id=chat_id)
+    cite_admins = ", ".join([f'@{admin.user.username}' for admin in admins])
+    msg = f"""Hi {cite_admins}.\n@{reporter} reported service {service_name} username {username} broken."""
+    await context.bot.send_message(chat_id=chat_id, text=msg)
 
 
 # actions handlers
@@ -373,7 +413,8 @@ def _create_service(chat_id: int, service: str, username: str) -> None:
 def _update_service(chat_id: int, service: str, new_service: str) -> bool:
     result = False
     with Session() as session:
-        service = session.query(Service).filter(Service.name == service).filter(Service.chat_id == chat_id).one_or_none()
+        service = session.query(Service).filter(Service.name == service).filter(
+            Service.chat_id == chat_id).one_or_none()
         if service:
             service.name = new_service
             session.commit()
@@ -493,7 +534,7 @@ def _release(chat_id: int, service: str, username: str, current_user: str) -> bo
 
 
 def _check_args(args: str, expected_args: list) -> bool:
-    return (len(args.split()) - 1) == len(expected_args)  # TODO: add typing check here
+    return (len(args.split()) - 1) == len(expected_args)
 
 
 async def _is_admin_or_creator(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
@@ -510,6 +551,8 @@ if __name__ == '__main__':
     status_handler = CommandHandler('status', status_handler)
     status_me_handler = CommandHandler('status_me', status_me_handler)
     ranking_handler = CommandHandler('ranking', ranking_handler)
+
+    cmd_handler = None
 
     # create service handlers
     services_handler = CommandHandler('services', services_handler)

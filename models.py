@@ -4,6 +4,7 @@ from sqlalchemy import Column, Integer, String, ForeignKey, DateTime
 from sqlalchemy.orm import relationship, backref
 from sqlalchemy.ext.declarative import declarative_base
 import enum
+import datetime
 
 
 Base = declarative_base()
@@ -88,4 +89,4 @@ class Usage(Base):
     finished_at = Column(DateTime, nullable=True)
 
     def __repr__(self):
-        return f'{self.created_by} {self.type} {self.account.username} since {self.created_at}'
+        return f'{self.performed_by} used {self.account.username} from {self.started_at} until {self.finished_at or "-"}'
