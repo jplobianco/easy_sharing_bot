@@ -15,14 +15,14 @@ Talk to [@BotFather](https://telegram.me/botfather) to create your bot and get t
 Now you are going to run the bot using docker and pass the token you created in last step.
 
 ```bash
-docker container run -e BOT_TOKEN="YOUR_BOT_TOKEN_HERE" easy_sharing_bot
+docker container run -e BOT_TOKEN="YOUR_BOT_TOKEN_HERE" -e ALLOWED_CHAT_IDS="COMMA_SEPARATED_IDS_ALLOWED_TO_USE_BOT" jplobianco/easy_sharing_bot
 ```
 
 If you want to keep the database persistent, then:
 
 ```bash
 docker create volume bot-db
-docker container run -v bot-db:/app/bot.db -e BOT_TOKEN="YOUR_BOT_TOKEN_HERE" easy_sharing_bot
+docker container run -v bot-db:/app/bot.db -e BOT_TOKEN="YOUR_BOT_TOKEN_HERE" -e ALLOWED_CHAT_IDS="COMMA_SEPARATED_IDS_ALLOWED_TO_USE_BOT" jplobianco/easy_sharing_bot
 ```
 
 ### Start using the bot and getting help

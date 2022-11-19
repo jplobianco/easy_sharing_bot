@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import List
+from functools import wraps
 
 from sqlalchemy import create_engine, or_
 from sqlalchemy.sql import text as text_sa
@@ -20,6 +21,7 @@ from telegram.ext import ApplicationBuilder, CommandHandler
 
 load_dotenv()
 
+_PERMISSION_DENIED_MESSAGE = "This command is only available for admins."
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 
 logging.basicConfig(
@@ -31,21 +33,11 @@ engine = create_engine("sqlite:///bot.db")
 Base.metadata.create_all(engine)
 Session = sessionmaker(engine)
 
-_PERMISSION_DENIED_MESSAGE = "This command is only available for admins."
-
-
-
-from functools import wraps
-
-LIST_OF_ADMINS = [12345678, 87654321] # List of user_id of authorized users
-
 
 def only_admins_or_creators(func):
     @wraps(func)
     async def wrapped(update, context, *args, **kwargs):
-        # user_id = update.effective_user.id #if user_id not in LIST_OF_ADMINS:
         if not _is_admin_or_creator(update, context):
-            # print("Unauthorized access denied for {}.".format(user_id))
             await context.bot.send_message(chat_id=update.effective_chat.id, text="Only admins can use this command.")
             return
         return await func(update, context, *args, **kwargs)
@@ -71,7 +63,7 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             \n  /update_account  <service_name>  <username>  <new_username>  [new_password]
             \n  /delete_account  <service_name>  <username>
             \n  /use  <service_name>  <username>
-            \n  /release  <service_name> [username]
+            \n  /release  <service_name> <username>
             \n  /check  <service_name>
             \n  /report_broken  <service_name>  <username>
             \n  /ranking  [service_name]
@@ -139,11 +131,11 @@ async def ranking_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     with Session() as session:
         try:
             ranking_sql = text_sa("""SELECT Usage.performed_by, SUM(ROUND((JULIANDAY(CASE WHEN Usage.finished_at IS NULL THEN CURRENT_TIMESTAMP ELSE Usage.finished_at END) - JULIANDAY(Usage.started_at)) * 86400)) AS duration
-                                                      FROM Usage, Account, Service
-                                                      WHERE Usage.account_id = Account.account_id
-                                                      AND Account.service_id = Service.service_id
-                                                      AND Service.name = :service_name
-                                                      GROUP BY Usage.performed_by""")
+                                                                  FROM Usage, Account, Service
+                                                                  WHERE Usage.account_id = Account.account_id
+                                                                  AND Account.service_id = Service.service_id
+                                                                  AND Service.name = :service_name
+                                                                  GROUP BY Usage.performed_by""")
             ranking = session.execute(ranking_sql, {"service_name": service_name}).fetchall()
             if len(ranking) > 0:
                 msg = [f"Usage ranking for {service_name}:\n----------------------------------------------"]
@@ -220,7 +212,6 @@ async def delete_service_handler(update: Update, context: ContextTypes.DEFAULT_T
         usage = "Usage: /delete_service <service_name>"
         await context.bot.send_message(chat_id=chat_id, text=usage)
         return
-
 
     args: List[str] = text.split()
     service_name = args[1]
@@ -542,53 +533,46 @@ async def _is_admin_or_creator(update: Update, context: ContextTypes.DEFAULT_TYP
     return chat_member.status in ["admin", "creator"]
 
 
+class RestrictedCommandHandler(CommandHandler):
+    def __init__(self, *args, **kwargs):
+        self.allowed_ids = kwargs.pop('allowed_ids', None)
+        super().__init__(*args, **kwargs)
+
+    def check_update(self, update: Update):
+        if update.message is None or (self.allowed_ids and f'{update.effective_chat.id}' not in self.allowed_ids):
+            return False
+        return super().check_update(update)
+
+
 if __name__ == '__main__':
     application = ApplicationBuilder().token(BOT_TOKEN).build()
+    allowed_ids = os.getenv('ALLOWED_CHAT_IDS', None)
+    if allowed_ids:
+        allowed_ids = allowed_ids.split(',')
 
-    # create generic handlers
-    start_handler = CommandHandler('start', start_handler)
-    help_handler = CommandHandler('help', help_handler)
-    status_handler = CommandHandler('status', status_handler)
-    status_me_handler = CommandHandler('status_me', status_me_handler)
-    ranking_handler = CommandHandler('ranking', ranking_handler)
+    # generic handlers
+    application.add_handler(RestrictedCommandHandler('start', start_handler, allowed_ids=allowed_ids))
+    application.add_handler(RestrictedCommandHandler('help', help_handler, allowed_ids=allowed_ids))
+    application.add_handler(RestrictedCommandHandler('status', status_handler, allowed_ids=allowed_ids))
+    application.add_handler(RestrictedCommandHandler('status_me', status_me_handler, allowed_ids=allowed_ids))
+    application.add_handler(RestrictedCommandHandler('ranking', ranking_handler, allowed_ids=allowed_ids))
 
-    cmd_handler = None
+    # service handlers
+    application.add_handler(RestrictedCommandHandler('services', services_handler, allowed_ids=allowed_ids))
+    application.add_handler(RestrictedCommandHandler('create_service', create_service_handler, allowed_ids=allowed_ids))
+    application.add_handler(RestrictedCommandHandler('update_service', update_service_handler, allowed_ids=allowed_ids))
+    application.add_handler(RestrictedCommandHandler('delete_service', delete_service_handler, allowed_ids=allowed_ids))
+    application.add_handler(RestrictedCommandHandler('check', check_handler, allowed_ids=allowed_ids))
 
-    # create service handlers
-    services_handler = CommandHandler('services', services_handler)
-    create_service_handler = CommandHandler('create_service', create_service_handler)
-    update_service_handler = CommandHandler('update_service', update_service_handler)
-    delete_service_handler = CommandHandler('delete_service', delete_service_handler)
-    check_handler = CommandHandler('check', check_handler)
+    # account handlers
+    application.add_handler(RestrictedCommandHandler('accounts', accounts_handler, allowed_ids=allowed_ids))
+    application.add_handler(RestrictedCommandHandler('create_account', create_account_handler, allowed_ids=allowed_ids))
+    application.add_handler(RestrictedCommandHandler('update_account', update_account_handler, allowed_ids=allowed_ids))
+    application.add_handler(RestrictedCommandHandler('delete_account', delete_account_handler, allowed_ids=allowed_ids))
+    application.add_handler(RestrictedCommandHandler('report_broken', report_broken_handler, allowed_ids=allowed_ids))
 
-    # create account handlers
-    accounts_handler = CommandHandler('accounts', accounts_handler)
-    create_account_handler = CommandHandler('create_account', create_account_handler)
-    update_account_handler = CommandHandler('update_account', update_account_handler)
-    delete_account_handler = CommandHandler('delete_account', delete_account_handler)
-    report_broken_handler = CommandHandler('report_broken', report_broken_handler)
-
-    # create usage handlers
-    use_handler = CommandHandler('use', use_handler)
-    release_handler = CommandHandler('release', release_handler)
-
-    # register handlers
-    application.add_handler(start_handler)
-    application.add_handler(help_handler)
-    application.add_handler(status_handler)
-    application.add_handler(status_me_handler)
-    application.add_handler(ranking_handler)
-    application.add_handler(services_handler)
-    application.add_handler(create_service_handler)
-    application.add_handler(update_service_handler)
-    application.add_handler(delete_service_handler)
-    application.add_handler(check_handler)
-    application.add_handler(accounts_handler)
-    application.add_handler(create_account_handler)
-    application.add_handler(update_account_handler)
-    application.add_handler(delete_account_handler)
-    application.add_handler(report_broken_handler)
-    application.add_handler(use_handler)
-    application.add_handler(release_handler)
+    # usage handlers
+    application.add_handler(RestrictedCommandHandler('use', use_handler, allowed_ids=allowed_ids))
+    application.add_handler(RestrictedCommandHandler('release', release_handler, allowed_ids=allowed_ids))
 
     application.run_polling()
