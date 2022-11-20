@@ -4,7 +4,6 @@ from sqlalchemy import Column, Integer, String, ForeignKey, DateTime
 from sqlalchemy.orm import relationship, backref
 from sqlalchemy.ext.declarative import declarative_base
 import enum
-import datetime
 
 
 Base = declarative_base()
@@ -23,7 +22,7 @@ class Service(Base):
     accounts = relationship("Account", backref=backref("service"))
 
     def __repr__(self):
-        return f'Service {self.name}'
+        return f"Service {self.name}"
 
     @classmethod
     def find_by__name(cls, session, chat_id: int, name: str):
@@ -31,7 +30,7 @@ class Service(Base):
 
     @classmethod
     def find_by__chat_id(cls, session, chat_id: int):
-        return session.query(cls).filter_by(chat_id=chat_id).order_by('name').all()
+        return session.query(cls).filter_by(chat_id=chat_id).order_by("name").all()
 
 
 class Account(Base):
@@ -52,32 +51,36 @@ class Account(Base):
     usages = relationship("Usage", backref=backref("account"))
 
     def __repr__(self):
-        return f'Account {self.username}  {self.password}  ({self.available_display})'
+        return f"Account {self.username}  {self.password}  ({self.available_display})"
 
     @property
     def available_display(self):
         if self.grabbed_at is None or self.released_at is not None:
-            return 'Available'
-        return f'Unavailable [being used by @{self.grabbed_by}]'
+            return "Available"
+        return f"Unavailable [being used by @{self.grabbed_by}]"
 
     @classmethod
     def find_by__service_id(cls, session, service_id: int) -> List:
         return session.query(cls).filter_by(service_id=service_id).all()
 
     @classmethod
-    def find_by__chat_id__and__service_name(cls, session, chat_id: int, service: str) -> List:
-        return (session.query(cls)
-                .join(Service)
-                .filter(cls.service_id == Service.service_id)
-                .filter(Service.chat_id == chat_id)
-                .filter(Service.name == service)
-                .order_by(cls.username)
-                .all())
+    def find_by__chat_id__and__service_name(
+        cls, session, chat_id: int, service: str
+    ) -> List:
+        return (
+            session.query(cls)
+            .join(Service)
+            .filter(cls.service_id == Service.service_id)
+            .filter(Service.chat_id == chat_id)
+            .filter(Service.name == service)
+            .order_by(cls.username)
+            .all()
+        )
 
 
 class UsageChoices(enum.Enum):
-    using = 'using'
-    releasing = 'releasing'
+    using = "using"
+    releasing = "releasing"
 
 
 class Usage(Base):
