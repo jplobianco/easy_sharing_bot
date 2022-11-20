@@ -25,7 +25,7 @@ docker create volume bot-db
 docker container run -v bot-db:/app/bot.db -e BOT_TOKEN="YOUR_BOT_TOKEN_HERE" jplobianco/easy_sharing_bot
 ```
 
-If you want to restrict the access to the bot for a specific set of chats, then pass the desired chat ids as an env variable to the container:
+If you want to restrict access to the bot for a specific set of chats, then inform the desired chat ids as an env variable to the container:
 
 ```bash
 docker container run -v bot-db:/app/bot.db -e BOT_TOKEN="YOUR_BOT_TOKEN_HERE" -e ALLOWED_CHAT_IDS="COMMA_SEPARATED_IDS_ALLOWED_TO_USE_BOT" jplobianco/easy_sharing_bot
