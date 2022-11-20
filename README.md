@@ -1,4 +1,4 @@
-# EasyShareBot
+# EasySharingBot
 
 EasySharingBot is a telegram bot that helps you share accounts / credentials with friends and team members.
 
